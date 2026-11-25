@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	sbListener "github.com/sagernet/sing-box/common/listener"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/baderror"
@@ -279,9 +280,15 @@ func (w *HTTP2ConnWrapper) Upstream() any {
 }
 
 func DupContext(ctx context.Context) context.Context {
-	id, loaded := log.IDFromContext(ctx)
-	if !loaded {
-		return context.Background()
+	base := context.Background()
+	if id, loaded := log.IDFromContext(ctx); loaded {
+		base = log.ContextWithID(base, id)
 	}
-	return log.ContextWithID(context.Background(), id)
+	// The transport builds a fresh context for the inner connection, but the
+	// verified client address from the PROXY header has to survive it: that is
+	// the whole point of the listener patch.
+	if clientAddr := sbListener.ClientAddrFromContext(ctx); clientAddr.IsValid() {
+		base = sbListener.ContextWithClientAddr(base, clientAddr)
+	}
+	return base
 }

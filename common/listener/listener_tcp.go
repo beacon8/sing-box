@@ -1,6 +1,7 @@
 package listener
 
 import (
+	"context"
 	"net"
 	"net/netip"
 	"strings"
@@ -79,7 +80,9 @@ func (l *Listener) ListenTCP() (net.Listener, error) {
 	}
 	l.logger.Info("tcp server started at ", tcpListener.Addr())
 	l.tcpListener = tcpListener
-	return tcpListener, err
+	// Transports accept connections themselves, so hand them a listener that
+	// consumes the PROXY header in the connection's own goroutine first.
+	return WrapTransportListener(l.ctx, tcpListener), err
 }
 
 func (l *Listener) loopTCPIn() {
@@ -116,6 +119,15 @@ func (l *Listener) loopTCPIn() {
 		metadata.OriginDestination = M.SocksaddrFromNet(conn.LocalAddr()).Unwrap()
 		ctx := log.ContextWithNewID(l.ctx)
 		l.logger.InfoContext(ctx, "inbound connection from ", metadata.Source)
-		go l.connHandler.NewConnection(ctx, conn, metadata, nil)
+		go func(ctx context.Context, conn net.Conn, metadata adapter.InboundContext) {
+			connCtx, processedConn, clientAddr, err := PreprocessConn(ctx, conn)
+			if err != nil {
+				_ = conn.Close()
+				l.logger.ErrorContext(connCtx, "preprocess connection from ", metadata.Source, ": ", err)
+				return
+			}
+			metadata.ClientAddr = clientAddr
+			l.connHandler.NewConnection(connCtx, processedConn, metadata, nil)
+		}(ctx, conn, metadata)
 	}
 }

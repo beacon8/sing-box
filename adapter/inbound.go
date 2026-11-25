@@ -51,8 +51,13 @@ type InboundContext struct {
 	Network     string
 	Source      M.Socksaddr
 	Destination M.Socksaddr
-	User        string
-	Outbound    string
+	// ClientAddr is the verified client address seen by a trusted relay. It
+	// stays separate from Source, which is always the peer address used by
+	// source_ip_cidr and the rest of the routing rules. An invalid address
+	// means the connection is direct and Source is authoritative.
+	ClientAddr M.Socksaddr
+	User       string
+	Outbound   string
 
 	// power report
 

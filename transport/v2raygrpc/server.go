@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	sbListener "github.com/sagernet/sing-box/common/listener"
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -21,6 +22,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 	gM "google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/stats"
 )
 
 var _ adapter.V2RayServerTransport = (*Server)(nil)
@@ -32,8 +34,25 @@ type Server struct {
 	server  *grpc.Server
 }
 
+// clientAddrStatsHandler carries the verified PROXY client address from the
+// accepted connection into every stream context on it.
+type clientAddrStatsHandler struct{}
+
+func (clientAddrStatsHandler) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context {
+	return ctx
+}
+
+func (clientAddrStatsHandler) HandleRPC(context.Context, stats.RPCStats) {}
+
+func (clientAddrStatsHandler) TagConn(ctx context.Context, info *stats.ConnTagInfo) context.Context {
+	ctx, _ = sbListener.PreprocessAddrContext(ctx, info.LocalAddr, info.RemoteAddr)
+	return ctx
+}
+
+func (clientAddrStatsHandler) HandleConn(context.Context, stats.ConnStats) {}
+
 func NewServer(ctx context.Context, logger logger.ContextLogger, options option.V2RayGRPCOptions, tlsConfig tls.ServerConfig, handler adapter.V2RayServerTransportHandler) (*Server, error) {
-	var serverOptions []grpc.ServerOption
+	serverOptions := []grpc.ServerOption{grpc.StatsHandler(clientAddrStatsHandler{})}
 	if tlsConfig != nil {
 		if !common.Contains(tlsConfig.NextProtos(), http2.NextProtoTLS) {
 			tlsConfig.SetNextProtos(append([]string{"h2"}, tlsConfig.NextProtos()...))
@@ -69,7 +88,7 @@ func (s *Server) Tun(server GunService_TunServer) error {
 		}
 	}
 	done := make(chan struct{})
-	go s.handler.NewConnectionEx(log.ContextWithNewID(s.ctx), conn, source, M.Socksaddr{}, N.OnceClose(func(it error) {
+	go s.handler.NewConnectionEx(log.ContextWithNewID(server.Context()), conn, source, M.Socksaddr{}, N.OnceClose(func(it error) {
 		close(done)
 	}))
 	<-done
@@ -84,7 +103,7 @@ func (s *Server) Network() []string {
 }
 
 func (s *Server) Serve(listener net.Listener) error {
-	return s.server.Serve(listener)
+	return s.server.Serve(sbListener.WrapTransportListener(s.ctx, listener))
 }
 
 func (s *Server) ServePacket(listener net.PacketConn) error {
