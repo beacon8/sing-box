@@ -103,7 +103,8 @@ func (s *Server) Network() []string {
 }
 
 func (s *Server) Serve(listener net.Listener) error {
-	return s.server.Serve(sbListener.WrapTransportListener(s.ctx, listener))
+	// ListenTCP already returned a listener with the PROXY fast path applied.
+	return s.server.Serve(listener)
 }
 
 func (s *Server) ServePacket(listener net.PacketConn) error {
